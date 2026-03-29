@@ -131,6 +131,9 @@ export default function HomeScreen() {
   // Animations
   const cardRevealAnim      = useRef(new Animated.Value(0)).current;
   const replyTransitionAnim = useRef(new Animated.Value(1)).current;
+  const replyScaleAnim      = useRef(new Animated.Value(1)).current;
+  const refineFlashAnim     = useRef(new Animated.Value(0)).current;
+  const refineDotAnim       = useRef(new Animated.Value(0)).current;
   const toneAnim            = useRef(new Animated.Value(0)).current;
   const refineAnim          = useRef(new Animated.Value(0)).current;
   const sayThisAnim         = useRef(new Animated.Value(0)).current;
@@ -155,6 +158,7 @@ export default function HomeScreen() {
   const pulseLoop           = useRef<Animated.CompositeAnimation | null>(null);
   const dotLoop             = useRef<Animated.CompositeAnimation | null>(null);
   const shimmerLoop         = useRef<Animated.CompositeAnimation | null>(null);
+  const refineDotLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const selGlowLoop         = useRef<Animated.CompositeAnimation | null>(null);
 
   // Keep stageRef in sync so PanResponder callbacks don't read stale closure
@@ -519,30 +523,61 @@ export default function HomeScreen() {
     if (isRefining || !displayReply) return;
     setIsRefining(true);
 
-    // Immediately dim — user sees action triggered before fetch begins
-    Animated.timing(replyTransitionAnim, { toValue: 0.6, duration: 100, useNativeDriver: true }).start();
+    // Start dot pulse animation
+    refineDotLoop.current?.stop();
+    refineDotAnim.setValue(0);
+    refineDotLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(refineDotAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.timing(refineDotAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
+      ])
+    );
+    refineDotLoop.current.start();
 
-    const restoreOpacity = (onDone?: () => void) => {
-      Animated.timing(replyTransitionAnim, { toValue: 1, duration: 150, useNativeDriver: true })
-        .start(() => { setIsRefining(false); onDone?.(); });
+    // Dim + scale down
+    Animated.parallel([
+      Animated.timing(replyTransitionAnim, { toValue: 0.4, duration: 120, useNativeDriver: true }),
+      Animated.timing(replyScaleAnim, { toValue: 0.98, duration: 120, useNativeDriver: true }),
+    ]).start();
+
+    const restoreToIdle = () => {
+      refineDotLoop.current?.stop();
+      Animated.parallel([
+        Animated.timing(replyTransitionAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+        Animated.timing(replyScaleAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+      ]).start(() => setIsRefining(false));
     };
 
     try {
       const data = await rewriteReply(displayReply.native, instruction);
       if (data) {
-        // Fade out completely, swap text, then fade back in
+        refineDotLoop.current?.stop();
+        // Fade out + shrink
         await new Promise<void>(resolve =>
-          Animated.timing(replyTransitionAnim, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => resolve())
+          Animated.parallel([
+            Animated.timing(replyTransitionAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+            Animated.timing(replyScaleAnim, { toValue: 0.97, duration: 200, useNativeDriver: true }),
+          ]).start(() => resolve())
         );
         setDisplayReply(data);
-        // setIsRefining(false) called inside callback so label waits for fade-in to finish
-        Animated.timing(replyTransitionAnim, { toValue: 1, duration: 120, useNativeDriver: true })
-          .start(() => setIsRefining(false));
+        setIsRefining(false);
+        // Fade in + restore scale
+        replyTransitionAnim.setValue(0);
+        replyScaleAnim.setValue(0.97);
+        await new Promise<void>(resolve =>
+          Animated.parallel([
+            Animated.timing(replyTransitionAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+            Animated.timing(replyScaleAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+          ]).start(() => resolve())
+        );
+        // Flash confirmation
+        refineFlashAnim.setValue(1);
+        Animated.timing(refineFlashAnim, { toValue: 0, duration: 600, useNativeDriver: true }).start();
         return;
       }
-    } catch { /* fall through to restore */ }
+    } catch { /* fall through */ }
 
-    restoreOpacity();
+    restoreToIdle();
   };
 
   const handleReset = () => {
@@ -550,6 +585,7 @@ export default function HomeScreen() {
     pulseLoop.current?.stop();
     shimmerLoop.current?.stop();
     selGlowLoop.current?.stop();
+    refineDotLoop.current?.stop();
     dotScale.setValue(1);
     dotOpacity.setValue(0.7);
     resultsAnim.setValue(0);
@@ -557,6 +593,9 @@ export default function HomeScreen() {
     glowAnim.setValue(0);
     cardRevealAnim.setValue(0);
     replyTransitionAnim.setValue(1);
+    replyScaleAnim.setValue(1);
+    refineFlashAnim.setValue(0);
+    refineDotAnim.setValue(0);
     toneAnim.setValue(0);
     refineAnim.setValue(0);
     sayThisAnim.setValue(0);
@@ -857,9 +896,16 @@ export default function HomeScreen() {
                       end={{ x: 0.5, y: 1 }}
                     />
                     <Text style={s.replyLabel}>Send this</Text>
-                    <Animated.View style={{ opacity: replyTransitionAnim }}>
+                    {/* Flash overlay — appears on update confirmation */}
+                    <Animated.View style={[StyleSheet.absoluteFillObject, s.refineFlashOverlay, { opacity: refineFlashAnim }]} pointerEvents="none" />
+                    <Animated.View style={{ opacity: replyTransitionAnim, transform: [{ scale: replyScaleAnim }] }}>
                       <Text style={s.replyText}>{displayReply?.native}</Text>
-                      {isRefining && <Text style={s.refineLoadingText}>Refining…</Text>}
+                      {isRefining && (
+                        <View style={s.refineSpinnerRow}>
+                          <Animated.View style={[s.refineDot, { opacity: refineDotAnim }]} />
+                          <Text style={s.refineSpinnerText}>Refining…</Text>
+                        </View>
+                      )}
                       <Animated.View style={{ opacity: toneAnim, transform: [{ translateY: toneAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }}>
                         <Text style={s.replyTone}>Tone: {result.sayThis.tone || 'Direct • Calm • Controlled'}</Text>
                       </Animated.View>
@@ -2086,6 +2132,30 @@ const s = StyleSheet.create({
     color: '#5252CC',
     letterSpacing: 0.4,
     opacity: 0.85,
+  },
+  refineSpinnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  refineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#7070FF',
+  },
+  refineSpinnerText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#7070FF',
+    letterSpacing: 0.5,
+  },
+  refineFlashOverlay: {
+    borderRadius: 14,
+    backgroundColor: '#4040AA',
+    opacity: 0,
   },
   replyDivider: {
     height: 1,
