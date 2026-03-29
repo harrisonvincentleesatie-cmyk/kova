@@ -119,6 +119,7 @@ export default function HomeScreen() {
   const [continueOpen,      setContinueOpen]     = useState(false);
   const [continueMessage,   setContinueMessage]  = useState('');
   const [isContinuing,      setIsContinuing]     = useState(false);
+  const [testModeOpen,      setTestModeOpen]     = useState(false);
   const [zoneWidth,         setZoneWidth]        = useState(300);
   const [zoneHeight,        setZoneHeight]       = useState(210);
   const [cropFailed,        setCropFailed]       = useState(false);
@@ -635,6 +636,44 @@ export default function HomeScreen() {
     }
   };
 
+  const handleTestScenario = async (message: string) => {
+    setTestModeOpen(false);
+    setStage('analyzing');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+    startAnalyzingAnimations();
+    cardRevealAnim.setValue(0);
+    Animated.timing(cardRevealAnim, { toValue: 1, duration: 650, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedMessage: message, image: null }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      const data: Result = await response.json();
+      stopAnalyzingAnimations();
+      glowAnim.setValue(1);
+      setResult(data);
+      setDisplayReply(data.sayThis);
+      replyTransitionAnim.setValue(1);
+      resultsAnim.setValue(0);
+      redFlagAnim.setValue(0);
+      longGameAnim.setValue(0);
+      toneAnim.setValue(0);
+      refineAnim.setValue(0);
+      sayThisAnim.setValue(0);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStage('done');
+      startDotPulse();
+    } catch {
+      stopAnalyzingAnimations();
+      glowAnim.setValue(0);
+      setStage('idle');
+      Alert.alert('Test failed', 'Could not reach the server.');
+    }
+  };
+
   const handleReset = () => {
     dotLoop.current?.stop();
     pulseLoop.current?.stop();
@@ -677,6 +716,7 @@ export default function HomeScreen() {
     setContinueOpen(false);
     setContinueMessage('');
     setIsContinuing(false);
+    setTestModeOpen(false);
     setCopied(false);
     setImageUri(null);
     setBase64Data(null);
@@ -742,7 +782,9 @@ export default function HomeScreen() {
           {stage === 'idle' && (
             <>
               <View style={s.topCopy}>
-                <Text style={s.wordmark}>Kova</Text>
+                <TouchableOpacity onLongPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); setTestModeOpen(true); }} delayLongPress={800} activeOpacity={1}>
+                  <Text style={s.wordmark}>Kova</Text>
+                </TouchableOpacity>
                 <Text style={s.headline}>What's actually{'\n'}going on here?</Text>
                 <Text style={s.subheadline}>
                   I'll tell you what they mean, how serious it is, and exactly what to say.
@@ -1311,6 +1353,36 @@ export default function HomeScreen() {
 
             </Animated.View>
           )}
+        </View>
+      )}
+
+      {/* ── TEST MODE MODAL ── */}
+      {testModeOpen && (
+        <View style={s.testOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={() => setTestModeOpen(false)} />
+          <View style={s.testSheet}>
+            <View style={s.testHeader}>
+              <Text style={s.testTitle}>Test Mode</Text>
+              <TouchableOpacity onPress={() => setTestModeOpen(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <Text style={s.testClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {[
+              { label: 'Landlord scam', sub: 'Deposit before contract', message: 'Anh ơi, em báo nhanh nhé. Chủ nhà nói trước khi dọn vào, anh cần chuyển trước tiền cọc 2 triệu. Chủ nói chuyển sớm thì giữ phòng, không thì cho người khác thuê rồi đó anh.' },
+              { label: 'Flirty conversation', sub: 'Casual + playful tone', message: 'Haha anh hay thật, tối nay anh rảnh không? Em muốn đi uống gì đó nè 😏' },
+              { label: 'Casual chat', sub: 'Normal friendly message', message: 'Ủa anh đang ở đâu vậy? Lâu rồi không gặp, hôm nay có rảnh không?' },
+              { label: 'Negotiation', sub: 'Price bargaining', message: 'Anh ơi giá đó hơi cao so với thị trường, anh có thể bớt thêm được không? Em thấy chỗ khác họ bán rẻ hơn nhiều.' },
+              { label: 'Conflict', sub: 'Complaint message', message: 'Anh nói sẽ sửa điều hoà từ tuần trước mà đến giờ vẫn chưa thấy ai lên. Em ở trong phòng nóng không chịu được nữa rồi.' },
+            ].map(({ label, sub, message }) => (
+              <TouchableOpacity key={label} style={s.testRow} activeOpacity={0.7} onPress={() => handleTestScenario(message)}>
+                <View style={s.testRowLeft}>
+                  <Text style={s.testRowLabel}>{label}</Text>
+                  <Text style={s.testRowSub}>{sub}</Text>
+                </View>
+                <Text style={s.testRowArrow}>›</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       )}
 
@@ -2453,5 +2525,71 @@ const s = StyleSheet.create({
     fontWeight: '400',
     color: '#5A5A8A',
     lineHeight: 22,
+  },
+
+  // ── Test Mode ──────────────────────────────────────
+  testOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+    zIndex: 999,
+  },
+  testSheet: {
+    backgroundColor: '#0E0E1E',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: '#1E1E38',
+  },
+  testHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A30',
+  },
+  testTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5252CC',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  testClose: {
+    fontSize: 16,
+    color: '#444466',
+    fontWeight: '400',
+  },
+  testRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#111122',
+  },
+  testRowLeft: {
+    gap: 3,
+  },
+  testRowLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#DDDDF8',
+    letterSpacing: -0.2,
+  },
+  testRowSub: {
+    fontSize: 12,
+    color: '#44446A',
+    fontWeight: '400',
+  },
+  testRowArrow: {
+    fontSize: 20,
+    color: '#33335A',
+    fontWeight: '300',
   },
 });
