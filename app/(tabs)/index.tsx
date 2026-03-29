@@ -971,18 +971,6 @@ export default function HomeScreen() {
         {/* ── Anchored refine input bar — always visible above keyboard ── */}
         {refineOpen && isDone && (
           <View style={s.refineInputBar}>
-            <View style={s.refineSuggestRow}>
-              {['Be more direct', 'More polite', 'Ask instead', 'Sound natural'].map(chip => (
-                <TouchableOpacity
-                  key={chip}
-                  style={s.refineSuggestChip}
-                  activeOpacity={0.7}
-                  onPress={() => handleRefine(chip)}
-                >
-                  <Text style={s.refineSuggestText}>{chip}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
             <View style={s.refineInputWrap}>
               <TextInput
                 ref={refineInputRef}
