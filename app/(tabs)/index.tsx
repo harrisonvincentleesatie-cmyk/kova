@@ -23,9 +23,10 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
 // ─── IMPORTANT: replace with YOUR local IP (run: ipconfig getifaddr en0) ───
-const API_URL    = 'https://kova-backend-p02n.onrender.com/analyze';
-const REFINE_URL = 'https://kova-backend-p02n.onrender.com/refine';
-const OCR_URL    = 'https://kova-backend-p02n.onrender.com/ocr';
+const API_URL      = 'https://kova-backend-p02n.onrender.com/analyze';
+const REFINE_URL   = 'https://kova-backend-p02n.onrender.com/refine';
+const CONTINUE_URL = 'https://kova-backend-p02n.onrender.com/continue';
+const OCR_URL      = 'https://kova-backend-p02n.onrender.com/ocr';
 // ────────────────────────────────────────────────────────────────────────────
 
 type Stage = 'idle' | 'selecting' | 'locked' | 'analyzing' | 'done';
@@ -115,6 +116,9 @@ export default function HomeScreen() {
   const [refineInstruction, setRefineInstruction] = useState('');
   const [isRefining,        setIsRefining]       = useState(false);
   const [refineOpen,        setRefineOpen]       = useState(false);
+  const [continueOpen,      setContinueOpen]     = useState(false);
+  const [continueMessage,   setContinueMessage]  = useState('');
+  const [isContinuing,      setIsContinuing]     = useState(false);
   const [zoneWidth,         setZoneWidth]        = useState(300);
   const [zoneHeight,        setZoneHeight]       = useState(210);
   const [cropFailed,        setCropFailed]       = useState(false);
@@ -127,6 +131,7 @@ export default function HomeScreen() {
   const cropTimeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollViewRef      = useRef<ScrollView>(null);
   const refineInputRef     = useRef<TextInput>(null);
+  const continueInputRef   = useRef<TextInput>(null);
 
   // Animations
   const cardRevealAnim      = useRef(new Animated.Value(0)).current;
@@ -580,6 +585,56 @@ export default function HomeScreen() {
     restoreToIdle();
   };
 
+  const handleContinue = async (newMessage: string) => {
+    if (isContinuing || !result || !displayReply) return;
+    setIsContinuing(true);
+    setContinueMessage('');
+
+    try {
+      const response = await fetch(CONTINUE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          previousMessage: result.whatTheySaid || result.summary || '',
+          previousReply: displayReply.native,
+          previousAnalysis: {
+            riskLevel: result.riskLevel,
+            riskRead: result.riskRead,
+            summary: result.summary,
+            whatThisReallyMeans: result.whatThisReallyMeans,
+            whatToDo: result.whatToDo,
+          },
+          newMessage,
+        }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      const data = await response.json();
+
+      // Update result fields in place — do NOT reset the screen
+      setResult(prev => prev ? {
+        ...prev,
+        riskLevel: data.riskLevel ?? prev.riskLevel,
+        riskRead: data.riskRead ?? prev.riskRead,
+        whatToDo: data.whatToDo?.length ? data.whatToDo : prev.whatToDo,
+        summary: data.update ?? prev.summary,
+        whatThisReallyMeans: data.update ?? prev.whatThisReallyMeans,
+      } : prev);
+
+      // Fade out → swap reply → fade in
+      await new Promise<void>(resolve =>
+        Animated.timing(replyTransitionAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => resolve())
+      );
+      setDisplayReply(data.sayThis);
+      Animated.timing(replyTransitionAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+
+      setContinueOpen(false);
+    } catch {
+      // silent — keep input open
+    } finally {
+      setIsContinuing(false);
+    }
+  };
+
   const handleReset = () => {
     dotLoop.current?.stop();
     pulseLoop.current?.stop();
@@ -619,6 +674,9 @@ export default function HomeScreen() {
     setRefineInstruction('');
     setIsRefining(false);
     setRefineOpen(false);
+    setContinueOpen(false);
+    setContinueMessage('');
+    setIsContinuing(false);
     setCopied(false);
     setImageUri(null);
     setBase64Data(null);
@@ -673,7 +731,7 @@ export default function HomeScreen() {
         <View style={{ flex: 1 }}>
         <ScrollView
           ref={scrollViewRef}
-          contentContainerStyle={[s.scroll, refineOpen && isDone ? { paddingBottom: 240 } : undefined]}
+          contentContainerStyle={[s.scroll, (refineOpen || continueOpen) && isDone ? { paddingBottom: 240 } : undefined]}
           showsVerticalScrollIndicator={false}
           scrollEnabled={isDone}
           keyboardShouldPersistTaps="handled"
@@ -963,6 +1021,21 @@ export default function HomeScreen() {
                 </Animated.View>
               )}
 
+              {/* 6 — They replied */}
+              <Animated.View style={[s.continueSection, { opacity: longGameAnim }]}>
+                <TouchableOpacity
+                  style={s.continueBtn}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    setContinueOpen(true);
+                    setRefineOpen(false);
+                    setTimeout(() => continueInputRef.current?.focus(), 80);
+                  }}
+                >
+                  <Text style={s.continueBtnText}>They replied — what now?</Text>
+                </TouchableOpacity>
+              </Animated.View>
+
             </Animated.View>
           )}
 
@@ -993,6 +1066,45 @@ export default function HomeScreen() {
             >
               <Text style={s.refineCancelText}>Cancel</Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── Anchored continue input bar ── */}
+        {continueOpen && isDone && (
+          <View style={s.refineInputBar}>
+            <View style={s.continueInputHeader}>
+              <Text style={s.continueInputLabel}>What did they say?</Text>
+            </View>
+            <View style={s.refineInputWrap}>
+              <TextInput
+                ref={continueInputRef}
+                style={s.refineInput}
+                placeholder="Paste their reply…"
+                placeholderTextColor="#3A3A5A"
+                value={continueMessage}
+                onChangeText={setContinueMessage}
+                onSubmitEditing={() => {
+                  const t = continueMessage.trim();
+                  if (t) handleContinue(t);
+                }}
+                returnKeyType="send"
+                editable={!isContinuing}
+                multiline
+              />
+            </View>
+            {isContinuing ? (
+              <View style={s.refineCancelRow}>
+                <Text style={s.refineSpinnerText}>Reading…</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={s.refineCancelRow}
+                activeOpacity={0.6}
+                onPress={() => { setContinueOpen(false); setContinueMessage(''); }}
+              >
+                <Text style={s.refineCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -1869,6 +1981,36 @@ const s = StyleSheet.create({
   longGameSection: {
     paddingTop: 48,
     paddingBottom: 8,
+  },
+  continueSection: {
+    paddingTop: 32,
+    paddingBottom: 40,
+    alignItems: 'center',
+  },
+  continueBtn: {
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    backgroundColor: '#0E0E1E',
+  },
+  continueBtnText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#7070CC',
+    letterSpacing: 0.3,
+  },
+  continueInputHeader: {
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+  },
+  continueInputLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#5252CC',
+    letterSpacing: 1.0,
+    textTransform: 'uppercase',
   },
   longGameHeader: {
     marginBottom: 18,
