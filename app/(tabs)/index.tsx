@@ -434,16 +434,20 @@ export default function HomeScreen() {
     });
     if (picked.canceled || !picked.assets?.[0]?.uri) return;
 
-    const uri = picked.assets[0].uri;
-    setImageUri(uri);
+    const pickerUri = picked.assets[0].uri;
     setStage('selecting');
 
-    // Resize in background
+    // Manipulate first — produces a guaranteed local file:// URI
     const manipulated = await ImageManipulator.manipulateAsync(
-      uri,
+      pickerUri,
       [{ resize: { width: 800 } }],
       { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG, base64: true }
     );
+
+    console.log("IMAGE URI:", manipulated.uri);
+
+    // Store the local URI — never use the raw picker URI for display or processing
+    setImageUri(manipulated.uri);
     setBase64Data(manipulated.base64!);
     setResizedUri(manipulated.uri);
     setResizedImgH(manipulated.height);
