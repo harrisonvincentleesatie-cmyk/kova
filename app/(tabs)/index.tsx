@@ -18,7 +18,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
@@ -101,9 +100,6 @@ export default function HomeScreen() {
   const [result,            setResult]           = useState<Result | null>(null);
   const [copied,            setCopied]           = useState(false);
   const [imageUri,          setImageUri]         = useState<string | null>(null);
-  const [base64Data,        setBase64Data]       = useState<string | null>(null);
-  const [resizedUri,        setResizedUri]       = useState<string | null>(null);
-  const [resizedImgH,       setResizedImgH]      = useState(0);
   const [imgNatW,           setImgNatW]          = useState(0);
   const [imgNatH,           setImgNatH]          = useState(0);
   const [overlayW,          setOverlayW]         = useState(Dimensions.get('window').width);
@@ -276,21 +272,6 @@ export default function HomeScreen() {
     return { imgW, imgH, offX, offY };
   };
 
-  // Converts screen selection box → crop coords on the resized (800px) image
-  const boxToResizedCrop = (box: SelectionBox) => {
-    const { imgW, imgH, offX, offY } = getImageLayout();
-    const clampX1 = Math.max(offX, Math.min(offX + imgW, box.x));
-    const clampY1 = Math.max(offY, Math.min(offY + imgH, box.y));
-    const clampX2 = Math.max(offX, Math.min(offX + imgW, box.x + box.width));
-    const clampY2 = Math.max(offY, Math.min(offY + imgH, box.y + box.height));
-    return {
-      originX: Math.round((clampX1 - offX) / imgW * 800),
-      originY: Math.round((clampY1 - offY) / imgH * resizedImgH),
-      width:   Math.max(1, Math.round((clampX2 - clampX1) / imgW * 800)),
-      height:  Math.max(1, Math.round((clampY2 - clampY1) / imgH * resizedImgH)),
-    };
-  };
-
   // Run OCR on a cropped base64 image and store the extracted text
   const runOcrOnCrop = async (base64: string) => {
     setIsOcrProcessing(true);
@@ -312,30 +293,9 @@ export default function HomeScreen() {
     }
   };
 
-  // Crop the current selectionBox, store result, then run OCR
-  const cropSelection = async (box: SelectionBox) => {
-    console.log('[CROP] START', { resizedUri: !!resizedUri, resizedImgH, imgNatW });
-    if (!resizedUri || resizedImgH === 0 || !imgNatW) {
-      console.log('[CROP] ABORTED — missing layout data');
-      return;
-    }
-    try {
-      const coords = boxToResizedCrop(box);
-      const crop = await ImageManipulator.manipulateAsync(
-        resizedUri,
-        [{ crop: { originX: coords.originX, originY: coords.originY, width: coords.width, height: coords.height } }],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-      if (!crop.base64) throw new Error('ImageManipulator returned no base64');
-      console.log('[CROP] DONE', crop.base64.length);
-      if (cropTimeoutRef.current) { clearTimeout(cropTimeoutRef.current); cropTimeoutRef.current = null; }
-      setCroppedBase64(crop.base64);
-      // OCR starts immediately in parallel — usually done before user taps Continue
-      runOcrOnCrop(crop.base64);
-    } catch (err) {
-      console.log('[CROP] ERROR', err);
-      /* if crop fails, user can still adjust */
-    }
+  // Crop selection is a no-op without image manipulation
+  const cropSelection = async (_box: SelectionBox) => {
+    console.log('[CROP] skipped — no image manipulation');
   };
   // Keep ref current so PanResponder (created once) always calls the latest version
   useEffect(() => { cropSelectionRef.current = cropSelection; });
@@ -420,7 +380,20 @@ export default function HomeScreen() {
     },
   })).current;
 
-  // Stage: idle → open picker, resize, show selection overlay
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 1,
+    });
+
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+
+    const uri = result.assets[0].uri;
+
+    setImageUri(uri);
+  };
+
+  // Stage: idle → open picker, show selection overlay
   const handlePickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -428,29 +401,14 @@ export default function HomeScreen() {
       return;
     }
     const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      base64: false,
-      quality: 0.5,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 1,
     });
     if (picked.canceled || !picked.assets?.[0]?.uri) return;
 
-    const pickerUri = picked.assets[0].uri;
+    const uri = picked.assets[0].uri;
     setStage('selecting');
-
-    // Manipulate first — produces a guaranteed local file:// URI
-    const manipulated = await ImageManipulator.manipulateAsync(
-      pickerUri,
-      [{ resize: { width: 800 } }],
-      { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-    );
-
-    console.log("IMAGE URI:", manipulated.uri);
-
-    // Store the local URI — never use the raw picker URI for display or processing
-    setImageUri(manipulated.uri);
-    setBase64Data(manipulated.base64!);
-    setResizedUri(manipulated.uri);
-    setResizedImgH(manipulated.height);
+    setImageUri(uri);
   };
 
   // User confirms selection → analyze
@@ -470,8 +428,8 @@ export default function HomeScreen() {
 
     // Prefer extracted text; fall back to image if OCR failed
     const body = selectedMessageText
-      ? { image: base64Data, selectedMessage: selectedMessageText }
-      : { image: base64Data, selectedMessageImage: croppedBase64 };
+      ? { selectedMessage: selectedMessageText }
+      : { selectedMessageImage: croppedBase64 };
     console.log('[ANALYZE] SENDING REQUEST', { hasText: !!selectedMessageText, hasImage: !!croppedBase64 });
 
     try {
@@ -723,9 +681,6 @@ export default function HomeScreen() {
     setTestModeOpen(false);
     setCopied(false);
     setImageUri(null);
-    setBase64Data(null);
-    setResizedUri(null);
-    setResizedImgH(0);
     setImgNatW(0);
     setImgNatH(0);
     setCroppedBase64(null);
@@ -860,15 +815,12 @@ export default function HomeScreen() {
               </View>
 
               {/* Image reference card */}
-              {imageUri && (
-                <View style={s.imageRefCard}>
-                  <Image
-                    source={{ uri: imageUri }}
-                    style={s.imageRefThumb}
-                    resizeMode="cover"
-                  />
-                </View>
-              )}
+              {imageUri ? (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={{ width: 200, height: 200 }}
+                />
+              ) : null}
 
               {/* 0 — Red Flag (above everything else) */}
               {result.redFlag === true && !!result.redFlagTitle && (() => {
