@@ -100,6 +100,7 @@ export default function HomeScreen() {
   const [result,            setResult]           = useState<Result | null>(null);
   const [copied,            setCopied]           = useState(false);
   const [imageUri,          setImageUri]         = useState<string | null>(null);
+  const [base64Data,        setBase64Data]       = useState<string | null>(null);
   const [imgNatW,           setImgNatW]          = useState(0);
   const [imgNatH,           setImgNatH]          = useState(0);
   const [overlayW,          setOverlayW]         = useState(Dimensions.get('window').width);
@@ -383,14 +384,18 @@ export default function HomeScreen() {
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 1,
+      base64: true,
+      quality: 0.5,
     });
 
-    if (result.canceled || !result.assets?.[0]?.uri) return;
+    if (result.canceled || !result.assets?.[0]) return;
 
-    const uri = result.assets[0].uri;
+    const asset = result.assets[0];
 
-    setImageUri(uri);
+    setImageUri(asset.uri);
+
+    // store base64 separately
+    setBase64Data(asset.base64 ?? null);
   };
 
   // Stage: idle → open picker, show selection overlay
@@ -402,13 +407,15 @@ export default function HomeScreen() {
     }
     const picked = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 1,
+      base64: true,
+      quality: 0.5,
     });
-    if (picked.canceled || !picked.assets?.[0]?.uri) return;
+    if (picked.canceled || !picked.assets?.[0]) return;
 
-    const uri = picked.assets[0].uri;
+    const asset = picked.assets[0];
+    setBase64Data(asset.base64 ?? null);
     setStage('selecting');
-    setImageUri(uri);
+    setImageUri(asset.uri);
   };
 
   // User confirms selection → analyze
@@ -429,7 +436,7 @@ export default function HomeScreen() {
     // Prefer extracted text; fall back to image if OCR failed
     const body = selectedMessageText
       ? { selectedMessage: selectedMessageText }
-      : { selectedMessageImage: croppedBase64 };
+      : { image: base64Data };
     console.log('[ANALYZE] SENDING REQUEST', { hasText: !!selectedMessageText, hasImage: !!croppedBase64 });
 
     try {
@@ -815,7 +822,7 @@ export default function HomeScreen() {
               </View>
 
               {/* Image reference card */}
-              {imageUri ? (
+              {imageUri && imageUri.startsWith("file") ? (
                 <Image
                   source={{ uri: imageUri }}
                   style={{ width: 200, height: 200 }}
@@ -1147,15 +1154,17 @@ export default function HomeScreen() {
               }}
               {...(isSelecting ? panResponder.panHandlers : {})}
             >
-              <Image
-                source={{ uri: imageUri }}
-                style={StyleSheet.absoluteFillObject}
-                resizeMode="contain"
-                onLoad={(e) => {
-                  setImgNatW(e.nativeEvent.source.width);
-                  setImgNatH(e.nativeEvent.source.height);
-                }}
-              />
+              {imageUri && imageUri.startsWith("file") ? (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={StyleSheet.absoluteFillObject}
+                  resizeMode="contain"
+                  onLoad={(e) => {
+                    setImgNatW(e.nativeEvent.source.width);
+                    setImgNatH(e.nativeEvent.source.height);
+                  }}
+                />
+              ) : null}
 
               {/* Static dim */}
               <View style={s.selectionDim} pointerEvents="none" />
@@ -1234,9 +1243,9 @@ export default function HomeScreen() {
                   }]}
                 >
                   <View style={s.replyingToCard}>
-                    {imageUri && (
+                    {imageUri && imageUri.startsWith("file") ? (
                       <Image source={{ uri: imageUri }} style={s.replyingToCardBg} resizeMode="cover" blurRadius={20} />
-                    )}
+                    ) : null}
                     <View style={s.replyingToCardOverlay} />
                     <View style={s.replyingToCardContent}>
                       <Text style={s.replyingToLabel}>Replying to</Text>
@@ -1273,14 +1282,14 @@ export default function HomeScreen() {
 
               {/* Message preview card */}
               <View style={s.msgCard}>
-                {selectedMessageText && imageUri && (
+                {selectedMessageText && imageUri && imageUri.startsWith("file") ? (
                   <Image
                     source={{ uri: imageUri }}
                     style={s.msgCardBg}
                     resizeMode="cover"
                     blurRadius={22}
                   />
-                )}
+                ) : null}
                 <View style={s.msgCardOverlay} />
                 <View style={s.msgCardInner}>
                   {selectedMessageText ? (
