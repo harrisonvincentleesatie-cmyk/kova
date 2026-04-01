@@ -394,8 +394,10 @@ export default function HomeScreen() {
 
     setImageUri(asset.uri);
 
-    // store base64 separately
-    setBase64Data(asset.base64 ?? null);
+    // IMPORTANT: ensure base64 exists
+    if (asset.base64) {
+      setBase64Data(asset.base64);
+    }
   };
 
   // Stage: idle → open picker, show selection overlay
@@ -432,6 +434,13 @@ export default function HomeScreen() {
 
     cardRevealAnim.setValue(0);
     Animated.timing(cardRevealAnim, { toValue: 1, duration: 650, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+
+    if (!base64Data) {
+      console.log("ERROR: base64 is missing");
+      return;
+    }
+
+    console.log("SENDING IMAGE LENGTH:", base64Data?.length);
 
     // Prefer extracted text; fall back to image if OCR failed
     const body = selectedMessageText
