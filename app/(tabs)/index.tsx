@@ -394,6 +394,10 @@ export default function HomeScreen() {
 
     setImageUri(asset.uri);
 
+    console.log("PICKED URI:", asset.uri);
+    console.log("BASE64 EXISTS:", !!asset.base64);
+    console.log("BASE64 LENGTH:", asset.base64?.length);
+
     // IMPORTANT: ensure base64 exists
     if (asset.base64) {
       setBase64Data(asset.base64);
@@ -435,18 +439,20 @@ export default function HomeScreen() {
     cardRevealAnim.setValue(0);
     Animated.timing(cardRevealAnim, { toValue: 1, duration: 650, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
 
-    if (!base64Data) {
-      console.log("ERROR: base64 is missing");
-      return;
-    }
+    console.log("ANALYZE INPUT:", {
+      hasImage: !!base64Data,
+      hasText: !!selectedMessageText,
+    });
 
-    console.log("SENDING IMAGE LENGTH:", base64Data?.length);
+    // Prioritise image over text when both exist
+    const body = base64Data
+      ? { image: base64Data }
+      : { selectedMessage: selectedMessageText };
 
-    // Prefer extracted text; fall back to image if OCR failed
-    const body = selectedMessageText
-      ? { selectedMessage: selectedMessageText }
-      : { image: base64Data };
-    console.log('[ANALYZE] SENDING REQUEST', { hasText: !!selectedMessageText, hasImage: !!croppedBase64 });
+    console.log("SENDING TO BACKEND:", {
+      usingImage: !!base64Data,
+      usingText: !!selectedMessageText,
+    });
 
     try {
       const response = await fetch(API_URL, {
